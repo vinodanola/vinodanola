@@ -27,6 +27,9 @@ TEXT = "#e6edf3"
 MUTED = "#7d8590"
 ACCENT = "#3fb950"
 LEVELS = ["#161b22", "#0e4429", "#006d32", "#26a641", "#39d353"]
+# Fraction box (left, top, right, bottom) cropped from the GitHub avatar; ignored for a custom avatar.png
+AVATAR_CROP = (0.25, 0.06, 0.75, 0.62)
+CARD_W = 460
 FONT = "ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace"
 
 
@@ -75,7 +78,7 @@ def contributions_svg(weeks, total):
     left, top = 48, 70
     days = [d for w in weeks for d in w]
     maxc = max((c for _, c, _ in days), default=0)
-    w = left + len(weeks) * (cell + gap) + 24
+    w = 2 * left + len(weeks) * (cell + gap) - gap
     h = top + 7 * (cell + gap) + 46
     out = [f'<text x="{w / 2}" y="34" text-anchor="middle" font-size="15" font-weight="700">'
            f'{escape(PROMPT)} ./contributions.sh</text>']
@@ -94,8 +97,8 @@ def contributions_svg(weeks, total):
         out.append(f'<text x="{left - 8}" y="{top + wd * (cell + gap) + 10}" text-anchor="end" '
                    f'font-size="10" class="m">{label}</text>')
     by = top + 7 * (cell + gap) + 20
-    out.append(f'<text x="{left}" y="{by}" font-size="12" font-weight="700">{total:,} contributions in the last year</text>')
-    lx = w - 24 - 5 * (cell + gap)
+    out.append(f'<text x="{left}" y="{by}" font-size="12" font-weight="700">{total:,} contribution{"" if total == 1 else "s"} in the last year</text>')
+    lx = w - left - 5 * (cell + gap) - 28
     out.append(f'<text x="{lx - 8}" y="{by}" text-anchor="end" font-size="10" class="m">Less</text>')
     for i, col in enumerate(LEVELS):
         out.append(f'<rect x="{lx + i * (cell + gap)}" y="{by - 10}" width="{cell - 2}" height="{cell - 2}" rx="2" fill="{col}"/>')
@@ -111,7 +114,7 @@ def window(w, h, title, body):
                extra_css="@keyframes b{50%{opacity:0}} .cur{animation:b 1s step-end infinite}")
 
 
-def ascii_svg(avatar_url, name):
+def ascii_svg(avatar_url, name, h):
     from PIL import Image, ImageOps
 
     custom = os.path.join(os.path.dirname(__file__), "..", "avatar.png")
@@ -120,20 +123,26 @@ def ascii_svg(avatar_url, name):
     else:
         with urllib.request.urlopen(avatar_url.replace("v=4", "v=4&s=400")) as r:
             img = Image.open(io.BytesIO(r.read())).convert("L")
+        W, H = img.size
+        l, t, r_, b = AVATAR_CROP
+        img = img.crop((int(l * W), int(t * H), int(r_ * W), int(b * H)))
     img = ImageOps.autocontrast(img, cutoff=2)
-    img = img.point(lambda v: int(255 * (v / 255) ** 2.2))  # sink mid-tones so the background fades
-    cols, cw, lh = 72, 6.0, 7.2  # monospace glyph ~0.6em wide at 10px
+    img = img.point(lambda v: int(255 * (v / 255) ** 2.0))  # sink mid-tones so the background fades
+    cols, cw, lh = 70, 6.0, 7.2  # monospace glyph ~0.6em wide at 10px
     rows = int(cols * img.height / img.width * cw / lh)
-    img = img.resize((cols, rows))
-    ramp = " .:-=+*#%@"
+    max_rows = int((h - 36 - 64) / lh)
+    if rows > max_rows:  # shrink width instead of squashing the picture
+        rows, cols = max_rows, int(max_rows * img.width / img.height * lh / cw)
+    img = img.resize((cols, rows), Image.LANCZOS)
+    ramp = "   .:-=+*#%@"  # leading spaces drop dark background noise
     lines = []
     for y in range(rows):
         lines.append("".join(ramp[img.getpixel((x, y)) * (len(ramp) - 1) // 255] for x in range(cols)))
-    w = int(cols * cw) + 40
-    h = 36 + 20 + int(rows * lh) + 44
+    w = CARD_W
+    top = 36 + (h - 36 - 44 - rows * lh) / 2 + 8
     body = [f'<text font-size="10" class="m" xml:space="preserve" letter-spacing="0">']
     for i, line in enumerate(lines):
-        body.append(f'<tspan x="20" y="{56 + i * lh:.1f}" textLength="{cols * cw:.0f}">{escape(line)}</tspan>')
+        body.append(f'<tspan x="{(w - cols * cw) / 2:.0f}" y="{top + i * lh:.1f}" textLength="{cols * cw:.0f}">{escape(line)}</tspan>')
     body.append("</text>")
     py = h - 18
     body.append(f'<text x="20" y="{py}" font-size="11"><tspan class="a">{escape(PROMPT)}</tspan> '
@@ -186,7 +195,7 @@ def stats(weeks):
             ("current streak", current, "day" if current == 1 else "days", rng(cur_range), True),
             ("longest streak", longest, "day" if longest == 1 else "days", rng(best_range), False),
             ("contributions", f"{total:,}", "", "in the last year", False),
-            ("active days", len(active), f"/ {len(days)}", f"{100 * len(active) // max(len(days), 1)}% of the year", False),
+            ("active days", len(active), f"/ {len(days)}", f"{round(100 * len(active) / max(len(days), 1))}% of the year", False),
             ("best day", best_day[1], "", f"{best_day[0]:%b %-d}" if best_day[1] else "—", False),
             ("avg / active day", f"{total / max(len(active), 1):.1f}", "", "contributions", False),
         ],
@@ -195,7 +204,7 @@ def stats(weeks):
 
 
 def stats_svg(s, height):
-    w = 440
+    w = CARD_W
     pad, gap = 16, 10
     cw = (w - 2 * pad - gap) / 2
     ch = 64
@@ -237,9 +246,9 @@ def main():
     user, weeks = fetch()
     total = sum(c for w in weeks for _, c, _ in w)
     files = {"contributions.svg": contributions_svg(weeks, total)}
-    files["ascii.svg"] = ascii_svg(user["avatarUrl"], user["name"] or USER)
-    height = int(files["ascii.svg"].split('height="', 1)[1].split('"', 1)[0])
-    files["stats.svg"] = stats_svg(stats(weeks), max(height, 420))
+    # same size for both cards so they line up side by side in the README
+    files["ascii.svg"] = ascii_svg(user["avatarUrl"], user["name"] or USER, 520)
+    files["stats.svg"] = stats_svg(stats(weeks), 520)
     for name, content in files.items():
         with open(os.path.join(OUT, name), "w") as f:
             f.write(content)
